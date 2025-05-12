@@ -1,0 +1,237 @@
+---
+title: "Final Fixed Effects Work"
+format: html
+editor: visual
+---
+
+load data
+```{r}
+library(rstan)
+library(tidyverse)
+library(bayesplot)
+
+cms_data <- read_csv('Data/final_dataset.csv')
+df_missing_if_any <- cms_data %>%
+  filter(if_any(everything(), is.na))
+
+complete_data <- cms_data %>% filter(rowSums(is.na(.)) < 1) %>% mutate(personal_income = personal_income/100000)
+```
+
+
+wait_time no lag
+
+```{r}
+X <- model.matrix(~ avg_wait_time + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+
+posterior <- as.array(fit)
+fe_mcmc_trace <- mcmc_trace(posterior, pars = c("beta[1]", "beta[2]", "beta[3]",'beta[4]'), facet_args = list(ncol = 2, nrow = 2))
+
+ggsave('FE trace plot.png')
+
+fe_ac_plot <- mcmc_acf(posterior, pars = c("beta[1]", "beta[2]"))
+ggsave('FE AC plot.png')
+```
+
+wait_time lag1
+
+```{r}
+X <- model.matrix(~ wait_lag1 + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+```
+
+wait_time lag10
+
+```{r}
+X <- model.matrix(~ wait_lag10 + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+```
+
+abandon_rate no lag
+
+```{r}
+X <- model.matrix(~ avg_abandonment_rate + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+```
+
+abandonment_rate lag1
+
+```{r}
+X <- model.matrix(~ abandon_lag1 + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+```
+
+abandonment_rate lag10
+
+```{r}
+X <- model.matrix(~ abandon_lag10 + R1_indicator + R2_indicator + R4_indicator +
+                    R6_indicator + Unemployment_Rate + personal_income +
+                    factor(State) + factor(reporting_period), 
+                  data = complete_data)[, -1]
+
+y <- complete_data$percent_administrative_terminated
+
+# Stan data list
+stan_data <- list(
+  N = nrow(X),
+  K = ncol(X),
+  X = X,
+  y = y
+)
+
+
+
+# Compile and fit the model
+fit <- stan(
+  file = "Stan FE Model.stan",
+  data = stan_data,
+  chains = 4,
+  iter = 5000,
+  warmup = 2000,
+  cores = 4,
+  seed = 123
+)
+
+# View posterior summaries
+print(fit, pars = c("alpha", "beta", "sigma"), probs = c(0.025, 0.5, 0.975),digits=4)
+```
