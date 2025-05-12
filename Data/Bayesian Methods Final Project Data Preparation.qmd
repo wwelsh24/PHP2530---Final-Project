@@ -1,0 +1,246 @@
+---
+title: "Bayesian Methods Final Project Data Preparation"
+format: html
+editor: visual
+---
+
+Libraries
+```{r}
+library(rstan)
+library(rstanarm)
+library(tidyverse)
+library(stringr)
+library(lme4)
+library(brms)
+library(tidycensus)
+```
+
+CMS Data Cleaning
+
+```{r}
+cms_data <- read_csv('Data/medicaid-chip-caa-reporting-metrics-long-table-october-2024-release.csv')
+
+cms_data_original <- cms_data
+
+new_metric_names <- c(
+  "Total number of Medicaid and CHIP beneficiaries for whom a renewal was initiated in the reporting month (Metric 4)" = "total_initiated_renewals",
+  "Total number of beneficiaries due for renewal in the reporting month (Metric 5)" = "total_renewals_due",
+  "Total number of beneficiaries due for renewal in the reporting month whose coverage was renewed (Metric 5a)" = "total_renewals_completed",
+  "Total beneficiaries renewed on an ex parte basis (i.e. based on available information) (Metric 5a1)" = "total_ex_parte_renewals",
+  "Total beneficiaries renewed based on the return of a renewal form (Metric 5a2)" = "total_form_renwals",
+  "Total number of beneficiaries due for renewal in the reporting month whose coverage was terminated (Metric 5b + 5c)" = "total_terminated",
+  "Total beneficiaries determined ineligible for Medicaid and CHIP based on the return of a renewal form (Metric 5b)" = "total_term_ineligible",
+  "Total beneficiaries whose coverage was terminated for a procedural or administrative reason (Metric 5c)" = "total_term_administrative",
+  "Total number of beneficiaries due for renewal in the reporting month whose renewal was pending at the end of the month (Metric 5d)" = "total_pending_renewals",
+  "Percent of beneficiaries whose coverage was renewed as a share of total beneficiaries due for renewal in the reporting month (Metric 5a / 5)" = "percent_renewed",                                             
+"Percent of beneficiaries renewed on an ex parte basis (i.e. based on available information) as a share of total beneficiaries due for renewal in the reporting month (Metric 5a1 / 5)"= "percent_ex_parte_renewals",  "Percent of beneficiaries renewed based on the return of a renewal form as a share of total beneficiaries due for renewal in the reporting month (Metric 5a2 / 5)" = "percent_form_renewals",                    
+"Percent of beneficiaries terminated from Medicaid and CHIP as a share of total beneficiaries due for renewal in the reporting month ((Metric 5b + 5c) / 5)" = "percent_terminated",
+"Percent of beneficiaries determined ineligible based on the return of a renewal form as a share of total beneficiaries due for renewal in the reporting month (Metric 5b / 5)" = "percent_ineligible_terminated",
+"Percent of beneficiaries whose coverage was terminated for a procedural or administrative reason as a share of total beneficiaries due for renewal in the reporting month (Metric 5c / 5)" = "percent_administrative_terminated",
+"Percent of beneficiaries whose renewal was pending at the end of the month as a share of total beneficiaries due for renewal in the reporting month (Metric 5d / 5)" = "percent_pending",
+"Total call center volume (number of calls)" = "total_calls",
+"Average call center wait time (minutes)" = "avg_wait_time",
+"Average call center abandonment rate" = "avg_abandonment_rate")
+
+
+cms_data <- cms_data %>%
+  mutate(`metric_name_short` = recode(`Metric name`, !!!new_metric_names))
+
+  
+unique_notes <- unique(na.omit(unlist(str_split(cms_data$`Data notes`, ",\\s*"))))
+unique_notes <- sort(unique_notes)
+
+for (note in unique_notes) {
+  col_name <- paste0(str_replace_all(note, "[^[:alnum:]]", "_"), "_indicator") # Sanitize column names
+  cms_data <- cms_data %>%
+    mutate(!!sym(col_name) := ifelse(str_detect(`Data notes`, fixed(note)), 1, 0))
+}
+
+cms_data_vals <- cms_data  %>%
+  pivot_wider(id_cols = c(State, `Reporting period`), names_from = metric_name_short,
+                          values_from = Value)
+
+cms_data_enc <- cms_data  %>% mutate_at(c(7:ncol(cms_data)), ~replace(., is.na(.), 0)) %>%
+  select(-`Metric name`,-Value)
+
+cms_data_enc <- cms_data_enc %>% group_by(State,`Reporting period`) %>% summarise_at(vars(C1_indicator:R9_indicator), max, na.rm = TRUE)
+
+cms_full <- merge(cms_data_vals,cms_data_enc) %>% arrange(State,`Reporting period`) %>%
+  group_by(State) %>%
+  mutate(wait_lag1 = dplyr::lag(avg_wait_time,n=1,order_by=c(State)),
+         abandon_lag1 = dplyr::lag(avg_abandonment_rate,order_by=State)) %>%
+  ungroup()
+
+
+cms_full <- cms_full %>%
+mutate(wait_lag10 = rowMeans(select(cms_full, avg_wait_time,wait_lag1), na.rm = TRUE)) %>%
+mutate(abandon_lag10 = rowMeans(select(cms_full, avg_abandonment_rate,abandon_lag1), na.rm = TRUE))
+
+cleaned_cms_data <- cms_full %>% filter(!is.na(total_renewals_due),
+                                      total_renewals_due>0,
+                                      State!='USA',
+                                      State!='SD') %>%
+  group_by(State) %>% arrange(State,`Reporting period`) %>%
+  mutate(reporting_period = as.factor(row_number())) 
+```
+
+Load Census Data
+```{r}
+
+
+#census_api_key(api_key, install = TRUE)
+
+
+
+limited_english_data <- get_acs(
+  geography = "state",
+  variables = c("NAME","S1602_C01_001E","S1602_C01_001M","S1602_C03_001E","S1602_C03_001M"),
+  year = 2023,
+  survey = "acs5",
+  output = "wide",
+  geometry = FALSE)
+
+limited_english_data <- limited_english_data %>% mutate(limited_english_rate = S1602_C03_001E/S1602_C01_001E)
+
+data(fips_codes)
+
+
+
+state_key <- fips_codes %>% select(state,state_name) %>% unique() %>% filter(
+                                      state!='USA',
+                                      state!='SD',
+                                      state!='PR',
+                                      state!='AS',
+                                      state!='GU',
+                                      state!='MP',
+                                      state!='VI',
+                                      state!='UM')
+colnames(state_key) <- c('State',"NAME")
+```
+
+Unemployment Rate Data
+```{r}
+ur_2023 <- read_csv('Data/KFF Unemployment Rate 2023.csv')
+
+ur_2024 <- read_csv('Data/KFF Unemployment Rate 2024.csv')
+
+
+ur_2023_long <- ur_2023 %>%
+  select(-Footnotes) %>%
+  pivot_longer(
+    cols = January:December, 
+    names_to = "Month",      
+    values_to = "Unemployment_Rate" 
+  ) %>%
+
+  mutate(
+    `Reporting period` = paste0(
+      "2023", 
+      case_when(
+        Month == "January" ~ "01",
+        Month == "February" ~ "02",
+        Month == "March" ~ "03",
+        Month == "April" ~ "04",
+        Month == "May" ~ "05",
+        Month == "June" ~ "06",
+        Month == "July" ~ "07",
+        Month == "August" ~ "08",
+        Month == "September" ~ "09",
+        Month == "October" ~ "10",
+        Month == "November" ~ "11",
+        Month == "December" ~ "12",
+        TRUE ~ NA_character_ # Handle any other unexpected values
+      )
+    )
+  ) %>%
+  mutate(Unemployment_Rate = as.numeric(Unemployment_Rate),
+         `Reporting period` = as.numeric(`Reporting period`))
+
+
+ur_2024_long <- ur_2024 %>%
+  select(-Footnotes) %>%
+  pivot_longer(
+    cols = January:December, 
+    names_to = "Month",      
+    values_to = "Unemployment_Rate" 
+  ) %>%
+
+  mutate(
+    `Reporting period` = paste0(
+      "2024", 
+      case_when(
+        Month == "January" ~ "01",
+        Month == "February" ~ "02",
+        Month == "March" ~ "03",
+        Month == "April" ~ "04",
+        Month == "May" ~ "05",
+        Month == "June" ~ "06",
+        Month == "July" ~ "07",
+        Month == "August" ~ "08",
+        Month == "September" ~ "09",
+        Month == "October" ~ "10",
+        Month == "November" ~ "11",
+        Month == "December" ~ "12",
+        TRUE ~ NA_character_ # Handle any other unexpected values
+      )
+    )
+  ) %>%
+  mutate(Unemployment_Rate = as.numeric(Unemployment_Rate),
+         `Reporting period` = as.numeric(`Reporting period`))
+
+ur_data <- rbind(ur_2023_long,ur_2024_long) %>% rename(NAME = Location)
+
+```
+Load Personal Income Data
+```{r}
+
+quarter_to_months_map <- list(
+  "Q1" = c("01", "02", "03"), # January, February, March
+  "Q2" = c("04", "05", "06"), # April, May, June
+  "Q3" = c("07", "08", "09"), # July, August, September
+  "Q4" = c("10", "11", "12")  # October, November, December
+)
+
+pi_data <- read_csv('Data/SQINC1__ALL_AREAS_1948_2024.csv')
+
+selected_pi_data <- pi_data %>%
+  select(GeoName,Description,`2023:Q1`:`2024:Q4`) %>%
+  pivot_longer(
+    cols = `2023:Q1`:`2024:Q4`, 
+    names_to = "Quarter",      
+    values_to = "Values" 
+  ) %>%
+  mutate(Metric = case_when(
+        Description == "Personal income (millions of dollars, seasonally adjusted)" ~ "total_personal_income",
+        Description == "Population (midperiod, persons) 1/" ~ "population",
+        Description == "Per capita personal income (dollars) 2/" ~ "personal_income")) %>%
+  select(-Description) %>%
+  pivot_wider(names_from = Metric,
+              values_from = Values) %>%
+  rename(NAME=GeoName)%>% 
+     mutate(NAME = gsub(" \\*", "", NAME)) %>%
+  select(-`NA`) %>%
+    separate(col = Quarter,       
+           into = c("Year", "Quarter"),
+           sep = ":") %>%
+  mutate(Month_Num_List = quarter_to_months_map[Quarter]) %>%
+  unnest(Month_Num_List) %>%
+  rename(Month_Num = Month_Num_List) %>%
+  mutate(`Reporting period` = paste0(Year, Month_Num)) %>% 
+  mutate(`Reporting period` = as.numeric(`Reporting period`)) %>%
+  select(NAME, `Reporting period`, total_personal_income, personal_income,population)
+
+```
+Merge Datasets
+
+```{r}
+final_data <- state_key %>% left_join(cleaned_cms_data) %>% 
+  left_join(ur_data) %>% left_join(limited_english_data) %>%
+  left_join(selected_pi_data) %>% rename(month_year = `Reporting period`) %>%ungroup()
+
+final_data <- apply(final_data,2,as.character)
+
+write.csv(final_data,"Data/final_dataset.csv", row.names = FALSE)
+```
+
+
